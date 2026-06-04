@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 模型文件
+models/
+
+# 数据文件
+data/test_pdfs/
+data/tmp/
+
+# 环境变量
+.env
+.env.local
+
+# Docker
+docker/data/
+
+# 日志
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
