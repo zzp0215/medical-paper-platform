@@ -22,6 +22,7 @@ from backend.core import NotFoundError, StorageError, fingerprint, logger, setti
 from backend.db import get_async_session
 from backend.models import Document, DocumentStatus, KnowledgeBase
 from backend.schemas import BatchUploadResponse, KnowledgeBaseCreate, KnowledgeBaseResponse, UploadResponse
+from backend.services.parse_service import parse_and_store
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -146,7 +147,14 @@ async def upload_pdf(
 
     logger.info("PDF 上传成功 | doc_id={} kb_id={} size={}B sha={}", doc.id, kb_id, len(content), sha[:12])
 
-    # TODO Phase 2.1.3: dispatch celery 解析任务
+    # MVP: 同步触发解析 (单篇 < 5s 可接受)
+    try:
+        await parse_and_store(session, doc.id)
+        await session.refresh(doc)
+    except Exception as e:
+        # 解析失败不阻塞上传, 文档状态置为 FAILED, 用户可重试
+        logger.warning("同步解析失败 (上传仍成功) | doc_id={} err={}", doc.id, e)
+
     return UploadResponse(
         document_id=doc.id,
         filename=file.filename or "untitled.pdf",
