@@ -1,0 +1,301 @@
+# ============================================
+# 医学论文自动生成平台 - 基础服务编排
+# ============================================
+# 启动:   docker compose -f docker/docker-compose.yml up -d
+#        或: docker-compose -f docker/docker-compose.yml up -d  (兼容 v1)
+# 关闭:   docker compose -f docker/docker-compose.yml down
+# 重置:   docker compose -f docker/docker-compose.yml down -v  (⚠️ 删除数据卷)
+# 日志:   docker compose -f docker/docker-compose.yml logs -f <service>
+#
+# 端口总览
+#   5432   - PostgreSQL    (关系数据库)
+#   6379   - Redis         (缓存 + Celery Broker)
+#   9000/9001 - MinIO      (对象存储, API/Console)
+#   19530  - Milvus        (向量数据库 gRPC)
+#   9091   - Milvus Metrics
+#   9200   - Elasticsearch (全文检索)
+#
+# 可选 profile (默认不启动)
+#   --profile admin   启动 pgAdmin + RedisInsight + Kibana
+# ============================================
+
+version: "3.7"
+
+# ---------- 通用网络 ----------
+networks:
+  medpaper-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ---------- 命名数据卷 ----------
+# 用命名卷而非 bind mount, 便于跨平台迁移 + 备份 (docker volume inspect)
+# 服务内通过名称引用, 如 `volumes: [postgres_data:/var/lib/postgresql/data]`
+# 注意: 这里的 keys (postgres_data) 是服务内引用名, name 字段才是真实卷名
+
+# ============================================
+# 服务定义
+# ============================================
+services:
+
+  # ---------- 1. PostgreSQL ----------
+  postgres:
+    image: postgres:16-alpine
+    container_name: medpaper-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-medpaper}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-in-prod}
+      POSTGRES_DB: ${POSTGRES_DB:-medpaper}
+      TZ: Asia/Shanghai
+      # 性能调优 (CPU 服务器 8G 内存场景)
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-medpaper} -d ${POSTGRES_DB:-medpaper}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - medpaper-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ---------- 2. Redis ----------
+  redis:
+    image: redis:7-alpine
+    container_name: medpaper-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:-change-me-in-prod}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-change-me-in-prod}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - medpaper-net
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ---------- 3. MinIO (对象存储) ----------
+  minio:
+    image: minio/minio:RELEASE.2024-09-13T20-26-02Z
+    container_name: medpaper-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-medpaper}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-in-prod}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - medpaper-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ---------- 4. Milvus 元数据 etcd ----------
+  milvus-etcd:
+    image: quay.io/coreos/etcd:v3.5.16
+    container_name: medpaper-milvus-etcd
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    volumes:
+      - milvus_etcd_data:/etcd
+    command: >
+      etcd -advertise-client-urls=http://milvus-etcd:2379
+           -listen-client-urls http://0.0.0.0:2379
+           --data-dir /etcd
+    networks:
+      - medpaper-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "2"
+
+  # ---------- 5. Milvus 内部 MinIO (与平台主 MinIO 隔离) ----------
+  milvus-minio:
+    image: minio/minio:RELEASE.2024-09-13T20-26-02Z
+    container_name: medpaper-milvus-minio
+    restart: unless-stopped
+    command: server /minio_data --address ":9000" --console-address ":9001"
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - milvus_minio_data:/minio_data
+    networks:
+      - medpaper-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "2"
+
+  # ---------- 6. Milvus Standalone ----------
+  milvus:
+    image: milvusdb/milvus:v2.4.10
+    container_name: medpaper-milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: milvus-etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+      # 关闭 telemetry (生产可关)
+      MILVUS_ENABLE_METRICS: "true"
+    depends_on:
+      - milvus-etcd
+      - milvus-minio
+    ports:
+      - "${MILVUS_PORT:-19530}:19530"
+      - "${MILVUS_METRICS_PORT:-9091}:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - medpaper-net
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ============================================
+  # 可选服务已拆分到 docker-compose.admin.yml
+  # 启动:  docker-compose -f docker-compose.yml -f docker-compose.admin.yml up -d
+  # ============================================
+
+  # ---------- 7. Elasticsearch (单节点) ----------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: medpaper-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      ELASTIC_PASSWORD: ${ES_PASSWORD:-change-me-in-prod}
+      # 内存优化 (CPU 服务器, 不用给太多)
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      bootstrap.memory_lock: "true"
+      # 禁 GeoIP 自动更新 (省事)
+      INGEST_GEOIP_DOWNLOADER_ENABLED: "false"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "${ES_PORT:-9200}:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -u elastic:${ES_PASSWORD:-change-me-in-prod} http://localhost:9200/_cluster/health | grep -E 'green|yellow' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - medpaper-net
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+        reservations:
+          memory: 768M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+# ============================================
+# 命名卷统一声明 (按服务聚合, 备份/迁移按此找)
+# ============================================
+volumes:
+  postgres_data:
+    name: medpaper_postgres_data
+  redis_data:
+    name: medpaper_redis_data
+  minio_data:
+    name: medpaper_minio_data
+  milvus_etcd_data:
+    name: medpaper_milvus_etcd_data
+  milvus_minio_data:
+    name: medpaper_milvus_minio_data
+  milvus_data:
+    name: medpaper_milvus_data
+  es_data:
+    name: medpaper_es_data
+  pgadmin_data:
+    name: medpaper_pgadmin_data
