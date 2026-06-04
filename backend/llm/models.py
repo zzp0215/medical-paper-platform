@@ -40,7 +40,8 @@ class ToolDefinition(BaseModel):
 class ChatRequest(BaseModel):
     """LLM 调用请求 (与 OpenAI Chat Completions 对齐子集)."""
 
-    model: str = Field(..., description="模型别名 (deepseek-chat / claude-sonnet / gpt-4o)")
+    # 可选, 由 LLMRouter 注入 (或调用方手动指定)
+    model: str = Field(default="", description="模型别名 (deepseek-chat / claude-sonnet / gpt-4o), LLMRouter 会自动注入")
     messages: list[ChatMessage]
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     max_tokens: int = Field(default=4096, ge=1, le=32000)
