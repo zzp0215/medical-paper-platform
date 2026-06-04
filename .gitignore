@@ -6,6 +6,7 @@ dist/
 build/
 .venv/
 venv/
+*.egg
 
 # IDE
 .idea/
@@ -15,17 +16,62 @@ venv/
 
 # 模型文件
 models/
+*.bin
+*.safetensors
+checkpoints/
 
 # 数据文件
 data/test_pdfs/
 data/tmp/
+data/uploads/
+data/outputs/
+*.pdf
+*.docx
 
 # 环境变量
 .env
 .env.local
+.env.*.local
 
-# Docker
-docker/data/
+# Docker 数据卷 (Phase 1.1.3+)
+docker/postgres_data/
+docker/redis_data/
+docker/minio_data/
+docker/milvus_data/
+docker/elasticsearch_data/
+docker/ragflow_data/
+
+# 向量库 & 索引
+chroma_db/
+faiss_index/
+*.index
+*.faiss
+
+# LangGraph
+langgraph_checkpoints/
+*.pkl
+
+# 前端 (Phase 5)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+
+# 测试 & 覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 备份文件
+*.bak
+*~
+*.orig
+*.rej
 
 # 日志
 *.log

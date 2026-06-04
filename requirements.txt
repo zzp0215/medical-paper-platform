@@ -1,0 +1,101 @@
+# ============================================
+# 医学论文自动生成平台 - Python 依赖
+# ============================================
+# 安装:  pip install -r requirements.txt
+# 注意:  生产环境建议用 uv / poetry / pip-tools 锁定
+# 分类按 TODO.md Phase 1-6 顺序排列,新增依赖请保持顺序
+# ============================================
+
+# ---------- Web 框架 (Phase 1.1.4) ----------
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.12
+pydantic==2.9.2
+pydantic-settings==2.6.0
+
+# ---------- 关系数据库 (Phase 1.1.3 / 1.1.4) ----------
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+alembic==1.13.3
+asyncpg==0.30.0
+aiosqlite==0.20.0                   # 仅 dev/test 用
+
+# ---------- 缓存 + 消息队列 (Phase 1.1.3) ----------
+redis==5.2.0
+celery==5.4.0
+flower==2.0.1                       # Celery 监控
+
+# ---------- 对象存储 (Phase 1.1.3) ----------
+minio==7.2.10
+
+# ---------- LLM 客户端 (Phase 1.1.5 / 4.x) ----------
+openai==1.54.0
+litellm==1.51.0
+httpx==0.27.2
+tenacity==9.0.0
+tiktoken==0.8.0
+
+# ---------- LangGraph / LangChain (Phase 4) ----------
+langgraph==0.2.45
+langgraph-checkpoint==2.0.5
+langchain==0.3.7
+langchain-openai==0.2.5
+langchain-community==0.3.5
+langchain-text-splitters==0.3.2
+
+# ---------- Embedding & 向量库 (Phase 3) ----------
+sentence-transformers==3.2.1
+chromadb==0.5.18
+pymilvus==2.5.4
+FlagEmbedding==1.2.11
+
+# ---------- PDF 解析 (Phase 2) ----------
+pymupdf==1.24.13
+pymupdf4llm==0.0.17
+# MinerU - 在 Phase 2.1.1 单独引入 (GPU 依赖重)
+# mineru[core]
+# magic-pdf[full]
+
+# ---------- BM25 检索 (Phase 3) ----------
+rank-bm25==0.2.2
+
+# ---------- Word 输出 (Phase 6) ----------
+python-docx==1.1.2
+docxtpl==0.18.0
+docxcompose==1.4.0
+
+# ---------- 认证 (Phase 5) ----------
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# ---------- 配置 / 日志 / 工具 ----------
+python-dotenv==1.0.1
+loguru==0.7.2
+pyyaml==6.0.1
+orjson==3.10.7
+
+# ---------- 测试 (Phase 9) ----------
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-cov==5.0.0
+pytest-mock==3.14.0
+locust==2.32.0                      # 性能测试
+
+# ---------- 代码质量 ----------
+ruff==0.7.2
+mypy==1.13.0
+pre-commit==4.0.1
+
+# ============================================
+# 后续 Phase 引入 (注释提示,不入安装)
+# ============================================
+# Phase 7: MMed-Llama3-8B 推理栈
+#   vllm==0.6.3
+#   transformers==4.46.0
+#   accelerate==1.0.1
+#
+# Phase 2: MinerU 微服务
+#   见 https://github.com/opendatalab/MinerU
+#
+# Phase 5: 前端 (Next.js, 独立 package.json)
+#   不用 Python,见 frontend/package.json
