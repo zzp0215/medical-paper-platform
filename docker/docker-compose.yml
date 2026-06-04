@@ -14,6 +14,7 @@
 #   19530  - Milvus        (向量数据库 gRPC)
 #   9091   - Milvus Metrics
 #   9200   - Elasticsearch (全文检索)
+#   4000   - LiteLLM Proxy (LLM 网关, OpenAI 兼容)
 #
 # 可选 profile (默认不启动)
 #   --profile admin   启动 pgAdmin + RedisInsight + Kibana
@@ -225,6 +226,56 @@ services:
           memory: 4G
         reservations:
           memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ---------- 8. LiteLLM Proxy (Phase 1.1.5) ----------
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: medpaper-litellm
+    restart: unless-stopped
+    # 运行时读 ./litellm/config.yaml + ./litellm/.env
+    volumes:
+      - ../litellm/config.yaml:/app/config.yaml:ro
+      - ../litellm/.env:/app/.env:ro
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    environment:
+      # 业务密钥透传 (与 litellm/.env 重复保险)
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-sk-dummy}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      MiniMax_API_KEY: ${MiniMax_API_KEY:-sk-ant-dummy}
+      MiniMax_BASE_URL: ${MiniMax_BASE_URL:-https://api.MiniMax.com}
+      VLM_API_KEY: ${VLM_API_KEY:-sk-dummy}
+      VLM_API_BASE: ${VLM_API_BASE:-https://api.openai.com/v1}
+      # 依赖
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_dev_pwd}
+      LITELLM_DATABASE_URL: postgresql://${POSTGRES_USER:-medpaper}:${POSTGRES_PASSWORD:-medpaper_dev_pwd}@postgres:5432/medpaper_litellm
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-master-change-me}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-sk-litellm-salt-change-me}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "4"]
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/health/liveliness"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - medpaper-net
+    deploy:
+      resources:
+        limits:
+          memory: 2G
     logging:
       driver: json-file
       options:

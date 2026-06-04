@@ -1,0 +1,100 @@
+# ============================================
+# LiteLLM Proxy 配置 (Phase 1.1.5 - 简化版)
+# ============================================
+# 启动:  docker compose -f docker/docker-compose.yml up -d litellm
+# 访问:
+#   UI    http://localhost:4000/ui
+#   API   http://localhost:4000 (OpenAI 兼容)
+#   鉴权  Bearer ${LITELLM_MASTER_KEY}
+#
+# 模型清单 (v0: 只用云端 API, 不上本地模型)
+# ----------------------------------------
+#   deepseek-chat       DeepSeek-V3 主力 (论文写作/Planner/Verifier)
+#   claude-sonnet       MiniMax Claude Sonnet 4.6 备用
+#   text-embedding-3s   OpenAI text-embedding-3-small (嵌入, 便宜够用)
+#
+# 决策 (2026-06-04)
+# -----------------
+# 暂不接入本地模型 (MMed-Llama3 / BGE-Reranker), 原因:
+#   1. CPU 服务器推理慢, 影响 MVP 闭环速度
+#   2. 翻译任务 DeepSeek 已能高质量完成 (中英双语强)
+#   3. 嵌入先用 OpenAI text-embedding-3-small (1536 维, $0.02/1M token)
+# 后续 Phase 8 (去 AI 化) 评估效果再决定是否引入本地模型
+# ============================================
+
+model_list:
+  # ---------- 主力: DeepSeek-V3 ----------
+  - model_name: deepseek-chat
+    litellm_params:
+      model: openai/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+      api_base: os.environ/DEEPSEEK_BASE_URL
+      timeout: 60
+    model_info:
+      tier: primary
+      cost_per_1k_input: 0.00014   # USD
+      cost_per_1k_output: 0.00028
+      tpm_limit: 100000
+      rpm_limit: 500
+
+  # ---------- 备用: Claude Sonnet 4.6 (走 MiniMax) ----------
+  - model_name: claude-sonnet
+    litellm_params:
+      model: openai/MiniMax-sonnet-4-6
+      api_key: os.environ/MiniMax_API_KEY
+      api_base: os.environ/MiniMax_BASE_URL
+      timeout: 90
+    model_info:
+      tier: premium
+      cost_per_1k_input: 0.003
+      cost_per_1k_output: 0.015
+      tpm_limit: 80000
+      rpm_limit: 400
+
+  # ---------- 嵌入: OpenAI text-embedding-3-small ----------
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/VLM_API_KEY   # 复用 OPENAI key
+      api_base: os.environ/VLM_API_BASE
+      timeout: 30
+    model_info:
+      tier: primary
+      cost_per_1k_input: 0.00002
+      cost_per_1k_output: 0.0
+      tpm_limit: 1000000
+      rpm_limit: 3000
+      dim: 1536
+
+# ============================================
+# Router 设置
+# ============================================
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 3
+  timeout: 60
+  enable_caching: true
+  cache_params:
+    type: redis
+    host: os.environ/REDIS_HOST
+    port: os.environ/REDIS_PORT
+    password: os.environ/REDIS_PASSWORD
+    supported_call_types: ["acompletion", "aembedding"]
+  enable_pre_call_checks: true
+  set_verbose: false
+  telemetry: false
+
+# ============================================
+# 通用设置
+# ============================================
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  allowed_routes: ["/chat/completions", "/completions", "/embeddings", "/health", "/models", "/v1/models"]
+  database_url: os.environ/LITELLM_DATABASE_URL
+  disable_spend_logs: false
+  port: 4000
+
+litellm_settings:
+  drop_params: true               # 不支持的参数自动丢弃
+  modify_params: true
+  # success_callback: ["langfuse"]  # TODO: 接观测 (Phase 9)

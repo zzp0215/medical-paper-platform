@@ -24,3 +24,19 @@ INSERT INTO medpaper._healthcheck DEFAULT VALUES;
 
 -- 输出 schema
 \dn medpaper
+
+-- ============================================
+-- LiteLLM 专用数据库 (Phase 1.1.5)
+-- ============================================
+-- 单独库避免与主应用 schema 冲突; LiteLLM 启动时自动建表
+-- 注意: 需在 postgres 容器第一次启动时执行 (用 CREATE DATABASE)
+-- ============================================
+-- 注: PostgreSQL init 脚本不支持 CREATE DATABASE 在 IF NOT EXISTS 形式,
+--      用 DO 块做幂等
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'medpaper_litellm') THEN
+        CREATE DATABASE medpaper_litellm;
+    END IF;
+END
+$$;

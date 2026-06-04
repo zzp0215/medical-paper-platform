@@ -42,7 +42,7 @@ class AppSettings(BaseSettings):
     )
 
     name: str = "medical-paper-platform"
-    env: Literal["development", "staging", "production"] = "development"
+    env: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = True
     secret_key: str = Field(default="change-me-please-use-openssl-rand-hex-32", validation_alias="APP_SECRET_KEY")
     api_v1_prefix: str = "/api/v1"
@@ -165,52 +165,66 @@ class ESSettings(BaseSettings):
 
 
 class LLMSettings(BaseSettings):
-    """LLM 网关配置 (Phase 1.1.5 由 LiteLLM 接管)."""
+    """LLM 网关配置 (Phase 1.1.5 简化版: 仅云端 API).
+
+    决策 (2026-06-04): 暂不接入本地模型, 只用 DeepSeek + MiniMax
+    - DeepSeek-V3 主力: 论文写作 / Planner / Verifier / 翻译
+    - MiniMax Claude Sonnet 4.6 备用: 质量敏感场景
+    - OpenAI text-embedding-3-small 嵌入 (Phase 3 启用)
+    """
 
     # 显式指定 alias, 避免 LLM_/LLM 命名混乱
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
 
-    # DeepSeek-V3 主力
+    # ---------- DeepSeek-V3 主力 ----------
     deepseek_api_key: str = Field(default="sk-your-deepseek-key", validation_alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com/v1", validation_alias="DEEPSEEK_BASE_URL")
     deepseek_model: str = Field(default="deepseek-chat", validation_alias="DEEPSEEK_MODEL")
 
-    # Claude 备用
+    # ---------- MiniMax (Claude 兼容) 备用 ----------
     anthropic_api_key: str = Field(default="sk-ant-your-anthropic-key", validation_alias="MiniMax_API_KEY")
-    anthropic_base_url: str = Field(default="https://api.anthropic.com", validation_alias="MiniMax_BASE_URL")
+    anthropic_base_url: str = Field(default="https://api.MiniMax.com", validation_alias="MiniMax_BASE_URL")
     anthropic_model: str = Field(default="MiniMax-sonnet-4-6", validation_alias="MiniMax_MODEL")
 
-    # MMed-Llama3 翻译
-    mmed_enabled: bool = Field(default=False, validation_alias="MMED_LLAMA_ENABLED")
-    mmed_api_base: str = Field(default="http://localhost:8001/v1", validation_alias="MMED_LLAMA_API_BASE")
-    mmed_model: str = Field(default="mmed-llama-3-8b", validation_alias="MMED_LLAMA_MODEL")
+    # ---------- OpenAI 嵌入 (text-embedding-3-small) ----------
+    openai_api_key: str = Field(default="sk-your-openai-key", validation_alias="OPENAI_API_KEY")
+    openai_base_url: str = Field(default="https://api.openai.com/v1", validation_alias="OPENAI_BASE_URL")
+    embedding_model: str = Field(default="text-embedding-3-small", validation_alias="EMBEDDING_MODEL")
+    embedding_dim: int = Field(default=1536, validation_alias="EMBEDDING_DIM")
 
-    # VLM 图表理解
-    vlm_api_base: str = Field(default="https://api.openai.com/v1", validation_alias="VLM_API_BASE")
-    vlm_api_key: str = Field(default="sk-your-vlm-key", validation_alias="VLM_API_KEY")
-    vlm_model: str = Field(default="gpt-4o", validation_alias="VLM_MODEL")
+    # ---------- LiteLLM Proxy 自身 ----------
+    litellm_base_url: str = Field(default="http://litellm:4000/v1", validation_alias="LITELLM_BASE_URL")
+    litellm_master_key: str = Field(default="sk-litellm-change-me", validation_alias="LITELLM_MASTER_KEY")
 
-    # 路由策略
+    # ---------- 路由策略 ----------
     router_strategy: Literal["cost_first", "quality_first", "manual"] = "cost_first"
     default_temperature: float = 0.3
     max_tokens: int = 4096
 
 
 class EmbeddingSettings(BaseSettings):
-    """Embedding & Reranker (本地 CPU 推理)."""
+    """Embedding & Reranker 配置.
+
+    决策 (2026-06-04): 暂不引入本地 BGE-M3 / BGE-Reranker
+    - Phase 3 起步用 OpenAI text-embedding-3-small (云端, 便宜)
+    - Rerank 用 LiteLLM 调 DeepSeek (LLM-as-rerank) 或暂不做
+    - 后续评估效果再决定是否引入本地模型
+    """
 
     model_config = SettingsConfigDict(env_prefix="EMBEDDING_", case_sensitive=False, extra="ignore")
 
-    model: str = "BAAI/bge-m3"
-    device: Literal["cpu", "cuda"] = "cpu"
-    batch_size: int = 8
-    dim: int = 1024
+    # 主嵌入 (云端)
+    model: str = "text-embedding-3-small"
+    dim: int = 1536
 
-    # Reranker 用单独 prefix
-    reranker_model: str = Field(default="BAAI/bge-reranker-large", validation_alias="RERANKER_MODEL")
-    reranker_device: Literal["cpu", "cuda"] = "cpu"
-    rerank_top_k: int = 8
+    # 备用本地模型 (暂未启用, 留接口)
+    local_model: str = "BAAI/bge-m3"
+    local_dim: int = 1024
+    use_local: bool = False   # 一键切换
+
+    batch_size: int = 8
     retrieval_top_k: int = 20
+    rerank_top_k: int = 8
 
 
 class RAGFlowSettings(BaseSettings):
