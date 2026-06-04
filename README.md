@@ -1,185 +1,138 @@
-# 医学论文自动生成平台 — 最终架构与开发计划
+# 医学论文自动生成平台
 
-> 版本 v1.0 | 2026-06-04 | 开发文档根目录: `/home/r720/disk4/yixue_lin/medical-paper-platform/`
+> 7 大核心需求: PDF批量上传解析 / 中文初稿生成 / 多轮修改 / Word输出 / 中→英翻译 / 去AI化 / 知识库增量
 
----
+## 当前状态 (2026-06-04)
 
-## 一、最终架构全景图
+✅ **MVP 跑通** (Sprint 1-3 完成, 49 测试通过)
 
+**完整业务流** (端到端可用):
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                         医学论文自动生成平台 — 7层架构                                  │
-├─────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                       │
-│  ┌───────────────────────────────────────────────────────────────────────────────┐  │
-│  │                          ① 前端交互层                                            │  │
-│  │  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────────┐  │  │
-│  │  │  Dify (快速搭建)      │  │  Next.js (论文编辑)   │  │  Streamlit (调试面板) │  │  │
-│  │  │  • 文档上传/管理      │  │  • 大纲确认/修改      │  │  • Agent状态可视化    │  │  │
-│  │  │  • 基础RAG问答       │  │  • 逐节审核          │  │  • 检索结果检查       │  │  │
-│  │  │  • 用户权限          │  │  • Word预览/下载      │  │  • 日志/监控          │  │  │
-│  │  └──────────────────────┘  └──────────────────────┘  └──────────────────────┘  │  │
-│  └──────────────────────────────────────┬──────────────────────────────────────────┘  │
-│                                         │ HTTP/WebSocket                              │
-│                                         ▼                                              │
-│  ┌───────────────────────────────────────────────────────────────────────────────┐  │
-│  │                       ② API网关 + 任务队列                                       │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐  │  │
-│  │  │ FastAPI       │  │ WebSocket    │  │ Celery        │  │ Redis              │  │  │
-│  │  │ REST API     │  │ 流式推送      │  │ 长任务异步     │  │ 消息队列+缓存       │  │  │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘  └───────────────────┘  │  │
-│  └──────────────────────────────────────┬──────────────────────────────────────────┘  │
-│                                         │                                              │
-│                             ┌───────────┴──────────┐                                   │
-│                             ▼                      ▼                                   │
-│  ┌─────────────────────────────────┐  ┌─────────────────────────────────────────┐    │
-│  │  ③ PDF解析引擎 (MinerU)         │  │  ④ 知识库与检索层                          │    │
-│  ├─────────────────────────────────┤  ├─────────────────────────────────────────┤    │
-│  │                                 │  │                                          │    │
-│  │  ┌───────────────────────────┐  │  │  ┌─── 知识库地基 (RAGFlow) ───────────┐  │    │
-│  │  │ 布局检测 (doclayout_yolo) │  │  │  │  • DeepDoc 深度文档理解             │  │    │
-│  │  │ 公式检测 (YOLOv8)         │  │  │  │  • 向量存储 (Milvus)                │  │    │
-│  │  │ 公式识别 → LaTeX          │  │  │  │  • 关键词倒排索引 (Elasticsearch)    │  │    │
-│  │  │ 表格识别 (StructEqTable)  │  │  │  │  • 增量更新 + 版本管理               │  │    │
-│  │  │ OCR (PaddleOCR, 84语言)  │  │  │  └────────────────────────────────────┘  │    │
-│  │  │ 图表提取 + AI描述生成     │  │  │                                          │    │
-│  │  │ 输出: Markdown + JSON     │  │  │  ┌─── 检索增强 (OpenScholar架构) ───────┐  │    │
-│  │  └───────────────────────────┘  │  │  │  • 多源融合检索                      │  │    │
-│  │                                 │  │  │    ├─ 本地向量库 (用户文献)          │  │    │
-│  │  ┌───────────────────────────┐  │  │  │    ├─ PubMed API (医学公开库)        │  │    │
-│  │  │ 医学适配                   │  │  │  │    └─ Web搜索 (最新研究)             │  │    │
-│  │  │ • 医学图表数值提取         │  │  │  │  • Cross-Encoder 重排序 (医学微调)  │  │    │
-│  │  │ • 表格数据结构化           │  │  │  │  • 自反馈迭代检索                    │  │    │
-│  │  │ • 统计检验结果识别         │  │  │  │  • 引用归因验证                      │  │    │
-│  │  └───────────────────────────┘  │  │  │  • MedRAG 医学语料增强               │  │    │
-│  │                                 │  │  └────────────────────────────────────┘  │    │
-│  └──────────────────┬──────────────┘  └────────────────────┬────────────────────┘    │
-│                     │                                      │                          │
-│                     └──────────────────┬───────────────────┘                          │
-│                                        ▼                                              │
-│  ┌───────────────────────────────────────────────────────────────────────────────┐  │
-│  │                      ⑤ 多Agent论文生成引擎 (LangGraph)                           │  │
-│  │                                                                                  │  │
-│  │                        ┌─────────────────────┐                                   │  │
-│  │                        │  Supervisor Agent    │                                   │  │
-│  │                        │  (任务调度/状态管理)  │                                   │  │
-│  │                        └──────┬──────────────┘                                   │  │
-│  │                               │                                                  │  │
-│  │    ┌──────────┬──────────┬────┴────┬──────────┬──────────┐                       │  │
-│  │    ▼          ▼          ▼          ▼          ▼          ▼                       │  │
-│  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐             │  │
-│  │  │Retriever│ │Planner │ │ Writer │ │Verifier│ │Citation│ │ Human  │             │  │
-│  │  │检索    │ │大纲    │ │ 写作   │ │ 验证   │ │ 引用   │ │ 用户   │             │  │
-│  │  │Agent  │ │Agent  │ │ Agent  │ │ Agent  │ │ Agent  │ │ Node  │             │  │
-│  │  ├────────┤ ├────────┤ ├────────┤ ├────────┤ ├────────┤ ├────────┤             │  │
-│  │  │多源检索│ │IMRaD  │ │逐节写作│ │事实核查│ │引用格式│ │大纲确认│             │  │
-│  │  │重排序 │ │结构化  │ │数据整合│ │数据校验│ │完整性  │ │章节审核│             │  │
-│  │  │自反馈 │ │大纲    │ │逻辑连贯│ │矛盾检测│ │去重    │ │修改指令│             │  │
-│  │  │引用标记│ │用户确认│ │术语统一│ │图表引用│ │交叉引用│ │版本管理│             │  │
-│  │  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘             │  │
-│  │                                                                                  │  │
-│  │  ┌──────────────────────────────────────────────────────────────────────┐       │  │
-│  │  │                        自反馈闭环 (核心质量机制)                       │       │  │
-│  │  │                                                                       │       │  │
-│  │  │  Retriever ──→ Writer ──→ Verifier ──→ 通过? ──→ Citation ──→ 下一节  │       │  │
-│  │  │      ↑                       │                                        │       │  │
-│  │  │      └─── 补充检索 ←── 不通过┘  (数据不足/引用缺失/事实存疑)            │       │  │
-│  │  └──────────────────────────────────────────────────────────────────────┘       │  │
-│  └──────────────────────────────────────┬──────────────────────────────────────────┘  │
-│                                         │                                              │
-│                                         ▼                                              │
-│  ┌───────────────────────────────────────────────────────────────────────────────┐  │
-│  │                          ⑥ 后处理层                                              │  │
-│  │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐  ┌──────────────┐  │  │
-│  │  │ Translator     │  │ Polisher       │  │ Formatter      │  │ Glossary     │  │  │
-│  │  │ 翻译 Agent     │  │ 润色 Agent     │  │ 排版 Agent     │  │ 术语库       │  │  │
-│  │  ├────────────────┤  ├────────────────┤  ├────────────────┤  ├──────────────┤  │  │
-│  │  │ MMed-Llama3-8B │  │ DeepSeek-V3    │  │ word_chat 引擎  │  │ UMLS映射     │  │  │
-│  │  │ fanyi 工具链   │  │ AMA风格Prompt  │  │ 三线表直写      │  │ 自建术语词典 │  │  │
-│  │  │ 医学术语校验   │  │ AI特征检测+改写 │  │ 交叉引用        │  │ 一致性检查   │  │  │
-│  │  │ 批量段落翻译   │  │ 人类写作风格   │  │ 公式OOXML       │  │ 版本管理     │  │  │
-│  │  └────────────────┘  └────────────────┘  └────────────────┘  └──────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────────────────┘  │
-│                                         │                                              │
-│                                         ▼                                              │
-│  ┌───────────────────────────────────────────────────────────────────────────────┐  │
-│  │                         ⑦ 数据与基础设施层                                        │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐  │  │
-│  │  │ PostgreSQL   │  │ MinIO         │  │ Milvus        │  │ Elasticsearch      │  │  │
-│  │  │ 元数据/状态  │  │ PDF/图片存储  │  │ 向量数据库    │  │ 全文检索           │  │  │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘  └───────────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                       │
-└─────────────────────────────────────────────────────────────────────────────────────┘
+PDF 上传 → 解析 (pymupdf4llm) → 向量化 (OpenAI 嵌入) → 入 Milvus
+   ↓
+输入论文题目 → 检索相关段落 → LLM 生成 IMRaD 大纲
+   ↓
+逐节 LLM 写作 → 拼装成完整论文 → python-docx 导出 Word
 ```
 
----
+## 快速开始
 
-## 二、数据流全景
+```bash
+# 1. 安装依赖 (Python 3.10)
+curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10 - --user
+python3.10 -m pip install --user -r requirements.txt
 
-```
-用户 ──→ 上传50-100篇PDF ──→ MinerU解析 ──→ 结构化数据(Markdown+JSON+图表)
-                                                    │
-                                      ┌─────────────┴─────────────┐
-                                      ▼                           ▼
-                              RAGFlow 入库                  MinIO 文件存储
-                              (向量+倒排索引)              (原始PDF+图片)
-                                      │
-                                      ▼
-                              知识库就绪 ←── PubMed/Web补充检索
-                                      │
-用户 ──→ 输入论文题目 ──→ Retriever Agent ──→ 检索相关段落+图表数据
-                                      │
-                                      ▼
-                              Planner Agent ──→ 生成IMRaD大纲
-                                      │
-                              Human Node ←── 用户确认/修改大纲
-                                      │
-                              ┌───────┴───────┐
-                              ▼               ▼
-                          Writer Agent    Writer Agent  (多章节并行)
-                              │               │
-                              ▼               ▼
-                          Verifier Agent ──→ 自反馈循环 (不通过→补充检索→重写)
-                              │
-                              ▼
-                          Citation Agent ──→ 引用校验+格式化
-                              │
-                              ▼
-                          Human Node ←── 用户审核全文
-                              │
-                              ▼
-                          Translator Agent ──→ 中→英翻译
-                              │
-                              ▼
-                          Polisher Agent ──→ 去AI化润色
-                              │
-                              ▼
-                          Formatter Agent ──→ Word (.docx) 输出
-                              │
-                              ▼
-                           用户下载
+# 2. 启基础服务 (PostgreSQL + Redis + MinIO + Milvus + ES + LiteLLM)
+cd docker && docker-compose --env-file .env.docker up -d
+
+# 3. 配置 .env (根目录)
+cp .env.example .env
+# 填入 DEEPSEEK_API_KEY / MiniMax_API_KEY / OPENAI_API_KEY
+
+# 4. 跑端到端 demo (mock LLM, 不需 key)
+python3 scripts/demo_run.py
+
+# 5. 跑测试
+python3.10 -m pytest tests/   # 49 passed
 ```
 
----
+## 目录结构
 
-## 三、技术栈汇总
+```
+medical-paper-platform/
+├── backend/
+│   ├── api/                 # FastAPI 路由 (19 endpoints)
+│   ├── core/                # 配置/日志/异常/安全
+│   ├── db/                  # SQLAlchemy 异步 session
+│   ├── models/              # ORM 模型 (User/Paper/KB/Document/Task)
+│   ├── schemas/             # Pydantic 校验
+│   ├── services/            # 业务编排 (parse/embed/vectorize/pipeline)
+│   ├── agents/              # 简化版 Agent (planner/writer) + prompts/
+│   ├── retrieval/           # 向量检索
+│   ├── llm/                 # LLM 客户端 (LLMClient + LLMRouter 降级链)
+│   ├── parser/              # PDF 解析 (PyMuPDF + MinerU stub)
+│   ├── export/              # Word 导出
+│   └── kb/                  # 知识库 (RAGFlow 客户端 + LocalKB 兜底)
+├── docker/                  # Docker Compose (PG/Redis/MinIO/Milvus/ES/LiteLLM)
+├── litellm/                 # LiteLLM Proxy 配置
+├── alembic/                 # DB 迁移
+├── tests/                   # 49 个测试
+├── scripts/                 # demo_run / verify_pdf / verify_kb
+├── examples/                # hello_langgraph.py
+├── docs/                    # mvp-validation-report.md
+└── requirements.txt
+```
 
-| 层次 | 组件 | 用途 |
-|------|------|------|
-| **前端** | Dify + Next.js | 文档管理 + 论文编辑界面 |
-| **API** | FastAPI + WebSocket | REST接口 + 流式推送 |
-| **任务队列** | Celery + Redis | PDF解析/论文生成异步化 |
-| **工作流引擎** | **LangGraph** | 多Agent编排 + 自反馈循环 |
-| **PDF解析** | **MinerU** | PDF→Markdown+JSON(表格/公式/图表) |
-| **知识库** | **RAGFlow DeepDoc** | 文档入库 + 向量索引 + 基础检索 |
-| **检索增强** | **OpenScholar架构** | 多源融合 + Cross-Encoder + 自反馈 |
-| **医学语料** | **MedRAG** | PubMed术语 + 医学知识增强 |
-| **LLM网关** | LiteLLM | 统一多模型API调度 |
-| **主力模型** | DeepSeek-V3 | 论文写作/润色 |
-| **翻译模型** | MMed-Llama3-8B | 医学专业翻译 |
-| **嵌入模型** | BGE-M3 + MedCPT | 中英双语 + 医学专用向量化 |
-| **Word输出** | word_chat + python-docx | 排版→docx |
-| **段落润色** | Paper-Refiner-Tool | 逐段AI改写+人工审核 |
-| **数据库** | PostgreSQL + Milvus + ES + MinIO | 元数据+向量+全文+文件 |
-| **部署** | Docker Compose | 容器化一键部署 |
+## 关键决策 (2026-06-04)
+
+| 决策 | 原因 |
+|---|---|
+| **简化 LLM 栈**: 仅 DeepSeek + MiniMax + OpenAI 嵌入 | 不上本地模型, 加快打通 |
+| **简化检索**: 单次向量检索, 无 Cross-Encoder | 后期补 |
+| **单 Agent 写作**: 一次 LLM 调用写一节 | 不分多 Agent 协作 |
+| **同步执行**: 单篇 PDF < 1 分钟 | 后期上 Celery |
+| **PyMuPDF 替代 MinerU**: CPU 友好 | 后期 GPU 到位再切 |
+
+详见 [docs/mvp-validation-report.md](docs/mvp-validation-report.md)
+
+## API 端点 (19 路由)
+
+```
+GET   /health
+GET   /health/ready
+GET   /health/info
+
+POST  /api/v1/upload/knowledge-bases
+GET   /api/v1/upload/knowledge-bases
+POST  /api/v1/upload
+POST  /api/v1/upload/batch
+
+POST  /api/v1/retrieval/search
+
+POST  /api/v1/papers
+GET   /api/v1/papers
+GET   /api/v1/papers/{id}
+PATCH /api/v1/papers/{id}
+DEL   /api/v1/papers/{id}
+GET   /api/v1/papers/{id}/sections
+POST  /api/v1/papers/generate             # 一键生成
+POST  /api/v1/papers/{id}/outline         # 单独大纲
+POST  /api/v1/papers/{id}/write           # 单独写作
+GET   /api/v1/papers/{id}/export/word     # Word 下载
+
+POST  /api/v1/chat
+POST  /api/v1/export/word
+```
+
+## 测试统计
+
+```
+49 passed, 2 skipped
+- test_health.py       5 ✅ (liveness/readiness/request_id)
+- test_llm_gateway.py  9 ✅ (路由策略/降级链)
+- test_langgraph_hello 5 ✅ (状态/条件路由/完整 graph)
+- test_parser.py       6 ✅ (中英文 PDF)
+- test_chunker.py      5 ✅ (段落切块)
+- test_kb.py           7 ✅ (LocalKB + RAGFlow 接口)
+- test_agents.py       7 ✅ (Planner/Writer/Word 导出)
+- test_e2e.py          2 ✅ (端到端链路)
+- test_paper.py        2 skipped (需 DB)
+```
+
+## 后续优化方向 (按 ROI 排序)
+
+1. **真服务跑通** (5 医学 PDF 验证) — 验证质量
+2. **Word 排版升级** (上 word_chat, 加表格/公式) — 提升专业度
+3. **Verifier Agent** (事实核查) — 提升准确性
+4. **Cross-Encoder 重排** — 提升检索质量
+5. **多源融合** (PubMed/Web) — 扩展知识面
+6. **多 Agent 编排** (LangGraph 完整版) — 提升可控性
+7. **Celery 异步** — 提升并发
+8. **Dify/Next.js 前端** — 提升体验
+
+## 文档
+
+- [TODO.md](TODO.md) — 9-Phase 路线图
+- [docs/mvp-validation-report.md](docs/mvp-validation-report.md) — Sprint 3 验证报告
+- [docker/README.md](docker/README.md) — Docker 服务说明
+- [litellm/README.md](litellm/README.md) — LLM 网关说明
